@@ -49,8 +49,6 @@ fn generate_builder(derive_input: &DeriveInput) -> Result<proc_macro2::TokenStre
         }
     });
 
-    let (impl_generics, ty_generics, where_clause) = derive_input.generics.split_for_impl();
-
     let expanded = quote! {
         pub struct #builder_ident {
             #(#declare),*
@@ -60,7 +58,7 @@ fn generate_builder(derive_input: &DeriveInput) -> Result<proc_macro2::TokenStre
             #(#setter)*
         }
 
-        impl #impl_generics #name #ty_generics #where_clause {
+        impl #name {
             pub fn builder() -> #builder_ident {
                 #builder_ident {
                     #(#init),*
