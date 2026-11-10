@@ -10,15 +10,46 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
+fn inner_type<'a>(ty: &'a syn::Type, wrapper: &str) -> Option<&'a syn::Type> {
+    if let syn::Type::Path(syn::TypePath { qself: None, path, .. }) = ty {
+        if path.segments.len() == 1 {
+            let seg = &path.segments[0];
+            if seg.ident == wrapper {
+                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                    if args.args.len() == 1 {
+                        if let syn::GenericArgument::Type(inner) = &args.args[0] {
+                            return Some(inner);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn generate_build(
     name: &Ident,
     fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
     ty_generics: &syn::TypeGenerics,
 ) -> proc_macro2::TokenStream {
-    let unwrapping = fields.iter().map(|f| {
+    let checks = fields.iter().filter(|f| inner_type(&f.ty, "Option").is_none()).map(|f| {
         let ident = &f.ident;
         quote! {
-            let #ident = self.#ident.take().ok_or_else(|| std::format!("Field {} not set", stringify!(#ident)))?;
+            if self.#ident.is_none() {
+                return std::result::Result::Err(
+                    std::format!("Field {} not set", std::stringify!(#ident)).into(),
+                );
+            }
+        }
+    });
+
+    let unwrapping = fields.iter().map(|f| {
+        let ident = &f.ident;
+        if inner_type(&f.ty, "Option").is_some() {
+            quote! { let #ident = self.#ident.take(); }
+        } else {
+            quote! { let #ident = self.#ident.take().unwrap(); }
         }
     });
 
@@ -29,6 +60,7 @@ fn generate_build(
 
     quote! {
         pub fn build(&mut self) -> std::result::Result<#name #ty_generics, std::boxed::Box<dyn std::error::Error>> {
+            #(#checks)*
             #(#unwrapping)*
             std::result::Result::Ok(#name { #(#init),* })
         }
@@ -55,7 +87,11 @@ fn generate_builder(derive_input: &DeriveInput) -> Result<proc_macro2::TokenStre
     let declare = fields.iter().map(|f| {
         let ident = &f.ident;
         let ty = &f.ty;
-        quote! { #ident: std::option::Option<#ty> }
+        if inner_type(ty, "Option").is_some() {
+            quote! { #ident: #ty }
+        } else {
+            quote! { #ident: std::option::Option<#ty> }
+        }
     });
 
     let init = fields.iter().map(|f| {
@@ -66,10 +102,19 @@ fn generate_builder(derive_input: &DeriveInput) -> Result<proc_macro2::TokenStre
     let setter = fields.iter().map(|f| {
         let ident = &f.ident;
         let ty = &f.ty;
-        quote! {
-            fn #ident(&mut self, #ident: #ty) -> &mut Self {
-                self.#ident = std::option::Option::Some(#ident);
-                self
+        if let Some(inner) = inner_type(ty, "Option") {
+            quote! {
+                fn #ident(&mut self, #ident: #inner) -> &mut Self {
+                    self.#ident = std::option::Option::Some(#ident);
+                    self
+                }
+            }
+        } else {
+            quote! {
+                fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                    self.#ident = std::option::Option::Some(#ident);
+                    self
+                }
             }
         }
     });
