@@ -38,11 +38,26 @@ fn generate_builder(derive_input: &DeriveInput) -> Result<proc_macro2::TokenStre
         quote! { #ident: std::option::Option::None }
     });
 
+    let setter = fields.iter().map(|f| {
+        let ident = &f.ident;
+        let ty = &f.ty;
+        quote! {
+            fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                self.#ident = std::option::Option::Some(#ident);
+                self
+            }
+        }
+    });
+
     let (impl_generics, ty_generics, where_clause) = derive_input.generics.split_for_impl();
 
     let expanded = quote! {
         pub struct #builder_ident {
             #(#declare),*
+        }
+
+        impl #builder_ident {
+            #(#setter)*
         }
 
         impl #impl_generics #name #ty_generics #where_clause {
