@@ -10,6 +10,31 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
+fn generate_build(
+    name: &Ident,
+    fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+    ty_generics: &syn::TypeGenerics,
+) -> proc_macro2::TokenStream {
+    let unwrapping = fields.iter().map(|f| {
+        let ident = &f.ident;
+        quote! {
+            let #ident = self.#ident.take().ok_or_else(|| std::format!("Field {} not set", stringify!(#ident)))?;
+        }
+    });
+
+    let init = fields.iter().map(|f| {
+        let ident = &f.ident;
+        quote! { #ident }
+    });
+
+    quote! {
+        pub fn build(&mut self) -> std::result::Result<#name #ty_generics, std::boxed::Box<dyn std::error::Error>> {
+            #(#unwrapping)*
+            std::result::Result::Ok(#name { #(#init),* })
+        }
+    }
+}
+
 fn generate_builder(derive_input: &DeriveInput) -> Result<proc_macro2::TokenStream, syn::Error> {
     let fields = match &derive_input.data {
         syn::Data::Struct(syn::DataStruct {
@@ -51,6 +76,8 @@ fn generate_builder(derive_input: &DeriveInput) -> Result<proc_macro2::TokenStre
 
     let (impl_generics, ty_generics, where_clause) = derive_input.generics.split_for_impl();
 
+    let build = generate_build(name, fields, &ty_generics);
+
     let expanded = quote! {
         pub struct #builder_ident #impl_generics #where_clause {
             #(#declare),*
@@ -58,6 +85,7 @@ fn generate_builder(derive_input: &DeriveInput) -> Result<proc_macro2::TokenStre
 
         impl #impl_generics #builder_ident #ty_generics #where_clause {
             #(#setter)*
+            #build
         }
 
         impl #impl_generics #name #ty_generics #where_clause {
